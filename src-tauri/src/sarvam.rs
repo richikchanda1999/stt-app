@@ -147,25 +147,33 @@ impl Sarvam {
 
     /// PUT a local file to its Azure presigned URL (no auth header on Azure).
     pub async fn upload_file(&self, url: &str, path: &Path, content_type: &str) -> Result<()> {
-        let bytes = tokio::fs::read(path)
+        // Stream the file from disk instead of buffering it in memory — a large
+        // file (e.g. a 200MB+ or multi-hour recording) would otherwise allocate
+        // hundreds of MB and can OOM the app. Azure Block Blob PUT needs a known
+        // Content-Length (it rejects chunked transfer encoding), so we send the
+        // file size explicitly. The file is re-opened per retry attempt.
+        let size = tokio::fs::metadata(path)
             .await
-            .with_context(|| format!("reading {}", path.display()))?;
-        with_retry("upload-put", || {
-            let bytes = bytes.clone();
-            async move {
-                let r = self
-                    .http
-                    .put(url)
-                    .header("x-ms-blob-type", "BlockBlob")
-                    .header("Content-Type", content_type)
-                    .body(bytes)
-                    .send()
-                    .await?;
-                if r.status().is_success() {
-                    Ok(())
-                } else {
-                    Err(anyhow!("upload PUT failed: {}", r.status()))
-                }
+            .with_context(|| format!("stat {}", path.display()))?
+            .len();
+        with_retry("upload-put", || async {
+            let file = tokio::fs::File::open(path)
+                .await
+                .with_context(|| format!("opening {}", path.display()))?;
+            let body = reqwest::Body::wrap_stream(tokio_util::io::ReaderStream::new(file));
+            let r = self
+                .http
+                .put(url)
+                .header("x-ms-blob-type", "BlockBlob")
+                .header("Content-Type", content_type)
+                .header(reqwest::header::CONTENT_LENGTH, size)
+                .body(body)
+                .send()
+                .await?;
+            if r.status().is_success() {
+                Ok(())
+            } else {
+                Err(anyhow!("upload PUT failed: {}", r.status()))
             }
         })
         .await
@@ -253,6 +261,46 @@ async fn json_ok<T: serde::de::DeserializeOwned>(resp: reqwest::Response, what: 
     }
     serde_json::from_str::<T>(&text)
         .with_context(|| format!("{what}: decoding response body: {text}"))
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    // Verify a streamed upload body is sent with a fixed Content-Length (Azure
+    // Block Blob PUT rejects chunked transfer encoding).
+    #[tokio::test]
+    async fn streamed_upload_sends_content_length_not_chunked() {
+        use tokio::io::{AsyncReadExt, AsyncWriteExt};
+
+        let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
+        let addr = listener.local_addr().unwrap();
+
+        let server = tokio::spawn(async move {
+            let (mut sock, _) = listener.accept().await.unwrap();
+            let mut buf = vec![0u8; 4096];
+            let n = sock.read(&mut buf).await.unwrap();
+            let head = String::from_utf8_lossy(&buf[..n]).to_lowercase();
+            let _ = sock
+                .write_all(b"HTTP/1.1 201 Created\r\ncontent-length: 0\r\n\r\n")
+                .await;
+            head
+        });
+
+        // Temp file with known contents.
+        let path = std::env::temp_dir().join("sarvam_upload_test.bin");
+        tokio::fs::write(&path, vec![7u8; 5000]).await.unwrap();
+
+        let sarvam = Sarvam::new(reqwest::Client::new(), "k".into());
+        let _ = sarvam
+            .upload_file(&format!("http://{addr}/blob"), &path, "application/octet-stream")
+            .await;
+
+        let head = server.await.unwrap();
+        assert!(head.contains("content-length: 5000"), "missing fixed length:\n{head}");
+        assert!(!head.contains("transfer-encoding: chunked"), "used chunked:\n{head}");
+        let _ = tokio::fs::remove_file(&path).await;
+    }
 }
 
 /// Exponential-backoff retry (5 attempts, base 2s, doubling) — ports the Python `retry`.

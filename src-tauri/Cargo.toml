@@ -32,7 +32,7 @@ uuid = { version = "1.23.4", features = ["v4", "serde"] }
 chrono = { version = "0.4.45", features = ["serde"] }
 thiserror = "2.0.18"
 anyhow = "1.0.103"
-tokio-util = "0.7.18"
+tokio-util = { version = "0.7.18", features = ["io"] }
 futures-util = "0.3.32"
 reqwest = { version = "0.12", default-features = false, features = ["json", "stream", "rustls-tls"] }
 keyring = { version = "3", features = ["apple-native", "windows-native", "sync-secret-service"] }
