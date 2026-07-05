@@ -1,6 +1,6 @@
 [package]
 name = "sarvam-stt-app"
-version = "0.1.2"
+version = "0.1.3"
 description = "Sarvam batch Speech-to-Text desktop app"
 authors = ["Richik Chanda"]
 edition = "2021"
