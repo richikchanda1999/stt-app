@@ -394,6 +394,70 @@ fn export_docx(state: State<'_, Arc<AppState>>, run_file_id: String) -> AppResul
 }
 
 // ---------------------------------------------------------------------------
+// Update check — compare the running version against the latest GitHub release
+// ---------------------------------------------------------------------------
+
+const RELEASES_REPO: &str = "richikchanda1999/stt-app";
+
+#[derive(serde::Serialize)]
+struct UpdateInfo {
+    version: String,
+    current: String,
+    url: String,
+}
+
+fn parse_ver(s: &str) -> Vec<u64> {
+    s.split('.')
+        .map(|p| {
+            p.chars()
+                .take_while(|c| c.is_ascii_digit())
+                .collect::<String>()
+                .parse()
+                .unwrap_or(0)
+        })
+        .collect()
+}
+
+fn is_newer(candidate: &str, current: &str) -> bool {
+    let (a, b) = (parse_ver(candidate), parse_ver(current));
+    for i in 0..a.len().max(b.len()) {
+        let (x, y) = (a.get(i).copied().unwrap_or(0), b.get(i).copied().unwrap_or(0));
+        if x != y {
+            return x > y;
+        }
+    }
+    false
+}
+
+#[tauri::command]
+async fn check_for_update(state: State<'_, Arc<AppState>>) -> AppResult<Option<UpdateInfo>> {
+    let current = env!("CARGO_PKG_VERSION").to_string();
+    let resp = state
+        .http
+        .get(format!("https://api.github.com/repos/{RELEASES_REPO}/releases/latest"))
+        .header("User-Agent", "sarvam-stt-app")
+        .header("Accept", "application/vnd.github+json")
+        .send()
+        .await?;
+    // No published release yet, offline, or rate-limited — stay quiet.
+    if !resp.status().is_success() {
+        return Ok(None);
+    }
+    let v: serde_json::Value = resp.json().await?;
+    let latest = v.get("tag_name").and_then(|t| t.as_str()).unwrap_or_default().trim_start_matches('v');
+    let url = v
+        .get("html_url")
+        .and_then(|t| t.as_str())
+        .unwrap_or("https://github.com/richikchanda1999/stt-app/releases")
+        .to_string();
+    if !latest.is_empty() && is_newer(latest, &current) {
+        Ok(Some(UpdateInfo { version: latest.to_string(), current, url }))
+    } else {
+        Ok(None)
+    }
+}
+
+// ---------------------------------------------------------------------------
 // App bootstrap
 // ---------------------------------------------------------------------------
 
@@ -441,6 +505,7 @@ pub fn run() {
             retry_failed,
             cancel_run,
             export_docx,
+            check_for_update,
         ])
         .run(tauri::generate_context!())
         .expect("error while running tauri application");
