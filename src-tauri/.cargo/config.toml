@@ -1,0 +1,16 @@
+# Faster local Rust links via LLVM lld.
+#
+# Scoped to aarch64-apple-darwin so it only affects Apple-Silicon builds. Other
+# targets (CI Linux/Windows, Intel macOS) fall back to their default linker, so
+# this never breaks cross-platform CI. The release workflow installs lld on its
+# macOS runner so the Apple-Silicon CI build uses the same fast path.
+#
+# lld is keg-only, so we point at its absolute Homebrew path (same on this
+# machine and on GitHub's Apple-Silicon runners: /opt/homebrew).
+# `-Wl,-w` silences lld's harmless "object built for newer macOS" notes on
+# prebuilt asm crates (ring, libsqlite3-sys).
+[target.aarch64-apple-darwin]
+rustflags = [
+  "-C", "link-arg=-fuse-ld=/opt/homebrew/opt/lld/bin/ld64.lld",
+  "-C", "link-arg=-Wl,-w",
+]
