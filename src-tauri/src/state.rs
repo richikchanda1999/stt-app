@@ -16,6 +16,7 @@ pub struct AppPaths {
     pub audio_dir: PathBuf,
     pub json_dir: PathBuf,
     pub docx_dir: PathBuf,
+    pub logs_dir: PathBuf,
     pub db_path: PathBuf,
 }
 
@@ -29,12 +30,14 @@ impl AppPaths {
             audio_dir: base.join("audio"),
             json_dir: base.join("json"),
             docx_dir: base.join("docx"),
+            logs_dir: base.join("logs"),
             db_path: base.join("db").join("app.sqlite3"),
         };
         for dir in [
             &paths.audio_dir,
             &paths.json_dir,
             &paths.docx_dir,
+            &paths.logs_dir,
             &paths.db_path.parent().unwrap().to_path_buf(),
         ] {
             std::fs::create_dir_all(dir)

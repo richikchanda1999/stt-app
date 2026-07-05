@@ -118,7 +118,9 @@ fn set_settings(state: State<'_, Arc<AppState>>, input: SettingsInput) -> AppRes
 fn sha256_file(path: &PathBuf) -> AppResult<String> {
     let mut file = std::fs::File::open(path)?;
     let mut hasher = Sha256::new();
-    let mut buf = [0u8; 1024 * 1024];
+    // Heap buffer, NOT a stack array: a 1 MiB stack allocation overflows the
+    // default 1 MB thread stack on Windows and crashes the app.
+    let mut buf = vec![0u8; 128 * 1024];
     loop {
         let n = file.read(&mut buf)?;
         if n == 0 {
@@ -461,6 +463,24 @@ async fn check_for_update(state: State<'_, Arc<AppState>>) -> AppResult<Option<U
 // App bootstrap
 // ---------------------------------------------------------------------------
 
+/// Write Rust panics (with a backtrace) to a log file so production crashes on
+/// Windows/macOS/Linux leave a readable trail instead of a silent quit.
+/// (Note: a stack overflow is a hardware fault, not a panic, so it won't reach
+/// this — hence we also avoid large stack buffers.)
+fn install_panic_logger(log_path: PathBuf) {
+    let default = std::panic::take_hook();
+    std::panic::set_hook(Box::new(move |info| {
+        let bt = std::backtrace::Backtrace::force_capture();
+        let ts = chrono::Utc::now().to_rfc3339();
+        let entry = format!("\n===== panic @ {ts} =====\n{info}\n{bt}\n");
+        if let Ok(mut f) = std::fs::OpenOptions::new().create(true).append(true).open(&log_path) {
+            use std::io::Write;
+            let _ = f.write_all(entry.as_bytes());
+        }
+        default(info);
+    }));
+}
+
 fn resume_inflight(app: &AppHandle, state: &Arc<AppState>) {
     let jobs = {
         let conn = state.db.lock().unwrap();
@@ -485,6 +505,7 @@ pub fn run() {
         .setup(|app| {
             let handle = app.handle();
             let paths = AppPaths::resolve(handle)?;
+            install_panic_logger(paths.logs_dir.join("panic.log"));
             let conn = Connection::open(&paths.db_path)?;
             db::init(&conn)?;
             let state = Arc::new(AppState::new(conn, paths));
