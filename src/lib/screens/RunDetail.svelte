@@ -38,6 +38,17 @@
   const isRunning = $derived(run?.aggregate_state === "running");
   const failedCount = $derived(files.filter((f) => f.state === "failed").length);
 
+  // Group files by the Sarvam job they belong to (one job per language, <=20 files).
+  const fileGroups = $derived.by(() => {
+    const map = new Map<string, { key: string; jobId: string | null; language: string; files: typeof files }>();
+    for (const f of files) {
+      const key = f.job_id ?? "__none__";
+      if (!map.has(key)) map.set(key, { key, jobId: f.job_id, language: f.effective_language, files: [] });
+      map.get(key)!.files.push(f);
+    }
+    return [...map.values()];
+  });
+
   async function toggleTranscript(f: RunFile) {
     if (expanded[f.id] !== undefined) {
       const { [f.id]: _, ...rest } = expanded;
@@ -77,6 +88,38 @@
       showToast(String(e));
     } finally {
       exporting = { ...exporting, [f.id]: false };
+    }
+  }
+
+  let exportingJob = $state<Record<string, boolean>>({});
+
+  function doneCount(g: { files: typeof files }): number {
+    return g.files.filter((f) => f.state === "done").length;
+  }
+
+  async function exportJob(g: { key: string; files: typeof files }) {
+    const done = g.files.filter((f) => f.state === "done");
+    if (done.length === 0) return;
+    exportingJob = { ...exportingJob, [g.key]: true };
+    let lastPath: string | null = null;
+    let failures = 0;
+    try {
+      for (const f of done) {
+        try {
+          const path = await api.exportDocx(f.id);
+          lastPath = path;
+          activeRun.update((d) =>
+            d ? { ...d, files: d.files.map((x) => (x.id === f.id ? { ...x, docx_path: path } : x)) } : d,
+          );
+        } catch {
+          failures++;
+        }
+      }
+      const ok = done.length - failures;
+      showToast(`Exported ${ok} file${ok === 1 ? "" : "s"} to .docx${failures ? ` (${failures} failed)` : ""}`);
+      if (lastPath) await revealFile(lastPath); // open the folder with the docx files
+    } finally {
+      exportingJob = { ...exportingJob, [g.key]: false };
     }
   }
 
@@ -177,9 +220,25 @@
       </section>
     {/if}
 
-    <ul class="file-list detail">
-      {#each files as f (f.id)}
-        <li class="file-row detail" class:failed={f.state === "failed"}>
+    {#each fileGroups as g (g.key)}
+      <section class="job-group">
+        <div class="job-head">
+          <span class="job-label">Job</span>
+          {#if g.jobId}
+            <code class="job-id" title="Click to select · {g.jobId}">{g.jobId}</code>
+          {:else}
+            <span class="muted small">not started yet</span>
+          {/if}
+          <span class="job-meta muted small">{langLabel(g.language)} · {g.files.length} file{g.files.length === 1 ? "" : "s"}</span>
+          {#if doneCount(g) > 0}
+            <button class="btn sm" onclick={() => exportJob(g)} disabled={exportingJob[g.key]}>
+              {exportingJob[g.key] ? "Exporting…" : `Export all (${doneCount(g)})`}
+            </button>
+          {/if}
+        </div>
+        <ul class="file-list detail">
+          {#each g.files as f (f.id)}
+            <li class="file-row detail" class:failed={f.state === "failed"}>
           <div class="file-row-main">
             <div class="file-main">
               <span class="file-name" title={f.original_name}>{f.original_name}</span>
@@ -222,8 +281,10 @@
               {/if}
             </div>
           {/if}
-        </li>
-      {/each}
-    </ul>
+            </li>
+          {/each}
+        </ul>
+      </section>
+    {/each}
   {/if}
 </div>

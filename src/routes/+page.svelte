@@ -1,8 +1,9 @@
 <script lang="ts">
   import { onMount, onDestroy } from "svelte";
   import "../app.css";
-  import { view, toast, go } from "$lib/stores";
+  import { view, toast, update, go } from "$lib/stores";
   import { initEvents } from "$lib/events";
+  import { api, openInBrowser } from "$lib/api";
   import ImportRun from "$lib/screens/ImportRun.svelte";
   import History from "$lib/screens/History.svelte";
   import RunDetail from "$lib/screens/RunDetail.svelte";
@@ -12,8 +13,15 @@
 
   onMount(async () => {
     unlisten = await initEvents();
+    // Non-blocking, silent on failure (offline / no release / rate-limited).
+    api.checkForUpdate().then((u) => u && update.set(u)).catch(() => {});
   });
   onDestroy(() => unlisten?.());
+
+  async function downloadUpdate() {
+    const u = $update;
+    if (u) await openInBrowser(u.url);
+  }
 </script>
 
 <div class="app">
@@ -47,6 +55,14 @@
       <Settings />
     {/if}
   </main>
+
+  {#if $update}
+    <div class="toast update-toast">
+      <span>Update available — <strong>v{$update.version}</strong> (you have v{$update.current})</span>
+      <button class="btn sm primary" onclick={downloadUpdate}>Download</button>
+      <button class="icon-btn" title="Dismiss" onclick={() => update.set(null)}>✕</button>
+    </div>
+  {/if}
 
   {#if $toast}
     <div class="toast">{$toast}</div>

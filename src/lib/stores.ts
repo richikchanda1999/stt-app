@@ -1,5 +1,5 @@
 import { writable } from "svelte/store";
-import type { RunSummary, RunDetail, Settings } from "./api";
+import type { RunSummary, RunDetail, Settings, UpdateInfo } from "./api";
 
 export type View =
   | { name: "import" }
@@ -19,6 +19,8 @@ export type JobProg = {
   failed: number | null;
 };
 export const jobProgress = writable<Record<string, JobProg>>({});
+
+export const update = writable<UpdateInfo | null>(null);
 
 export const toast = writable<string | null>(null);
 let toastTimer: ReturnType<typeof setTimeout> | null = null;

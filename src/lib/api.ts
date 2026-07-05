@@ -1,7 +1,7 @@
 // Typed wrappers around the Rust commands + Tauri plugins.
 import { invoke } from "@tauri-apps/api/core";
 import { open as openDialog } from "@tauri-apps/plugin-dialog";
-import { openPath, revealItemInDir } from "@tauri-apps/plugin-opener";
+import { openPath, openUrl, revealItemInDir } from "@tauri-apps/plugin-opener";
 
 export type Asset = {
   id: string;
@@ -72,7 +72,10 @@ export type RetryInput = {
   num_speakers?: number | null;
 };
 
+export type UpdateInfo = { version: string; current: string; url: string };
+
 export const api = {
+  checkForUpdate: () => invoke<UpdateInfo | null>("check_for_update"),
   getSettings: () => invoke<Settings>("get_settings"),
   setSettings: (input: Omit<Settings, "has_api_key"> & { api_key?: string | null }) =>
     invoke<void>("set_settings", { input }),
@@ -105,4 +108,8 @@ export async function openFile(path: string) {
 
 export async function revealFile(path: string) {
   await revealItemInDir(path);
+}
+
+export async function openInBrowser(url: string) {
+  await openUrl(url);
 }
